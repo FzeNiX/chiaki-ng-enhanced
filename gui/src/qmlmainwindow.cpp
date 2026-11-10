@@ -7809,9 +7809,11 @@ void QmlMainWindow::render()
     }
 
     if ((vsr_applied && !RtxVsr::keepsResolution(rtx_vsr_quality)) || fg_applied) {
-        // The frame already is at display size; skip the shader upscalers.
-        params.hooks = nullptr;
-        params.num_hooks = 0;
+        // The frame already is at display size; skip the shader upscalers
+        // but keep RCAS, which sharpens the final image.
+        const bool rcas_active = num_active_hooks > 0 && active_hooks[num_active_hooks - 1] == rcas_hook;
+        params.hooks = rcas_active ? &active_hooks[num_active_hooks - 1] : nullptr;
+        params.num_hooks = rcas_active ? 1 : 0;
     }
     // Generated frames reuse the last stream frame's VSR state.
     if (!fg_override) {
