@@ -24,7 +24,7 @@ public:
         const double size = static_cast<double>(packet_size);
         // Decaying peak of recent sizes: follows bitrate changes and lets a
         // long static scene (all frames tiny) count as normal again.
-        large = std::max(size, large * 0.97);
+        large = (std::max)(size, large * 0.97); // parenthesised: windows.h defines max()
         last_size = packet_size;
         const bool tiny = size < large * kTinyRatio;
         history = (history << 1) | (tiny ? 1u : 0u);
