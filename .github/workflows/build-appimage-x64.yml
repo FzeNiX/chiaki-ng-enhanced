@@ -8,9 +8,10 @@ on:
     branches:
       - claude/happy-gauss-7i9rwm
 
-# A newer push to the same branch supersedes a running build.
+# A newer push to the same branch supersedes a running build. Literal name: in a
+# workflow_call run github.workflow is the caller's, so both builds would share a group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: build-appimage-x64-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
