@@ -21,6 +21,8 @@ jobs:
     
     steps:
       - name: Setup Podman
+        # A stalled Ubuntu mirror once hung apt here for 50+ minutes.
+        timeout-minutes: 10
         run: |
           sudo apt update
           sudo apt-get -y install podman
