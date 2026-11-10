@@ -3044,6 +3044,20 @@ void QmlMainWindow::presentFrame(ChiakiFfmpegFrame frame, int32_t frames_lost, q
     stream_frames_current.fetchAndAddRelaxed(1);
 
     if (bypass_frame_queue) {
+        const bool repeat = repeat_detector.feed(frame.packet_size);
+        const int cadence = repeat_detector.cadence();
+        if (fg_source_cadence.fetchAndStoreRelaxed(cadence) != cadence) {
+            qCInfo(chiakiGui).nospace() << "Source cadence: "
+                << (cadence == 2 ? "every picture repeated (e.g. 30 fps game in a 60 fps stream)"
+                                 : "a new picture every stream frame")
+                << ", packets ~" << static_cast<qint64>(repeat_detector.peakSize())
+                << " B, last " << static_cast<qint64>(repeat_detector.lastSize()) << " B";
+        }
+        // The repeat is the same picture; frame generation only works on new ones.
+        if (repeat && fg_status_backend.loadRelaxed() > 0) {
+            av_frame_free(&frame.frame);
+            return;
+        }
         {
             QMutexLocker locker(&direct_frame_mutex);
             if (direct_pending_frame) {
@@ -5371,6 +5385,8 @@ renderer_backend_ready:
             const int multiplier = fg_status_multiplier.loadRelaxed();
             if (multiplier > 1) {
                 part += QStringLiteral(" %1x").arg(multiplier);
+                if (fg_source_cadence.loadRelaxed() == 2)
+                    part += tr(" (half-rate source)");
                 if (frame_gen->gpuTimeMs() > 0.0f)
                     part += QStringLiteral(" %1 ms").arg(frame_gen->gpuTimeMs(), 0, 'f', 1);
             } else {
@@ -6809,7 +6825,7 @@ void QmlMainWindow::render()
     // With frame generation every stream frame is presented as several frames.
     const double present_submit_interval_s = timer_owned_playback
         ? present_interval_s
-        : stream_interval_s / qMax(1, fg_active_multiplier);
+        : stream_interval_s * fg_active_cadence / qMax(1, fg_active_multiplier);
     const qint64 present_interval_us = static_cast<qint64>(qMax(1.0, vsync_duration * 1000000.0) + 0.5);
     const bool pending_overflow_waiting = hasPendingFrameOverflow();
     const bool pending_frame_waiting = snapshotQueueDepth() >= effectiveQueueDepthLimit() || hasPendingFrame();
@@ -7730,6 +7746,7 @@ void QmlMainWindow::render()
         fg_last_backend = fg_backend;
         fg_pending_frames.clear();
         fg_active_multiplier = 1;
+        fg_active_cadence = 1;
         if (frame_gen)
             frame_gen->reset();
         if (fg_backend && !bypass_frame_queue)
@@ -7738,17 +7755,21 @@ void QmlMainWindow::render()
     bool fg_applied = fg_override;
     if (!fg_override && direct_frame_fresh && fg_backend > 0 && stream_active && direct_render_frame.num_planes > 0) {
         const auto backend_choice = static_cast<FrameGen::Backend>(fg_backend);
+        // With repeats dropped a picture lasts `cadence` stream frames; the
+        // multiplier stays relative to the stream rate, so output fps is kept.
+        const int cadence = fg_source_cadence.loadRelaxed();
+        const double source_interval_s = stream_interval_s * cadence;
         // More output frames than the display can show only adds latency.
-        const int refresh_cap = stream_interval_s > 0.0
-            ? static_cast<int>(std::floor(refresh_rate * stream_interval_s + 0.15))
+        const int refresh_cap = source_interval_s > 0.0
+            ? static_cast<int>(std::floor(refresh_rate * source_interval_s + 0.15))
             : 2;
-        int multiplier = qMin(settings->GetFrameGenMultiplier(), refresh_cap);
+        int multiplier = qMin(settings->GetFrameGenMultiplier() * cadence, refresh_cap);
         fg_refresh_limited = multiplier < 2;
         if (fg_refresh_limited && fg_skip_logged != 3) {
             fg_skip_logged = 3;
             qCInfo(chiakiGui).nospace() << "Frame generation skipped: the display runs at " << refresh_rate
                 << " Hz, which leaves no room for extra frames at "
-                << (stream_interval_s > 0.0 ? 1.0 / stream_interval_s : 0.0)
+                << (source_interval_s > 0.0 ? 1.0 / source_interval_s : 0.0)
                 << " fps (needs at least twice the stream frame rate)";
         }
         if (multiplier >= 2 && frame_gen->ensureInitialized(placebo_vulkan, backend_choice)) {
@@ -7770,7 +7791,7 @@ void QmlMainWindow::render()
             frame_gen->setFlowHighQuality(settings->GetFrameGenFlowHighQuality());
             if (multiplier >= 2 &&
                 frame_gen->process(&direct_render_frame, fg_out_w, fg_out_h, multiplier,
-                                   static_cast<float>(stream_interval_s * 1000.0), fg_outputs) &&
+                                   static_cast<float>(source_interval_s * 1000.0), fg_outputs) &&
                 !fg_outputs.empty()) {
                 if (fg_outputs.size() > 1 && fg_crash_guard_armed && ++fg_crash_guard_good_frames >= 120) {
                     QFile::remove(frameGenCrashGuardPath());
@@ -7778,10 +7799,12 @@ void QmlMainWindow::render()
                 }
                 direct_render_frame = fg_outputs.front();
                 fg_pending_frames.assign(fg_outputs.begin() + 1, fg_outputs.end());
-                if (fg_active_multiplier != multiplier)
-                    qCInfo(chiakiGui) << "Frame generation active:" << FrameGen::backendName(backend_choice)
-                                      << multiplier << "x";
+                if (fg_active_multiplier != multiplier || fg_active_cadence != cadence)
+                    qCInfo(chiakiGui).nospace() << "Frame generation active: " << FrameGen::backendName(backend_choice)
+                                      << " " << multiplier << "x"
+                                      << (cadence == 2 ? " of a half-rate source (repeats dropped)" : "");
                 fg_active_multiplier = multiplier;
+                fg_active_cadence = cadence;
                 fg_applied = true;
             }
         }
@@ -7789,6 +7812,7 @@ void QmlMainWindow::render()
     if (direct_frame_fresh && !fg_applied && fg_active_multiplier != 1) {
         qCInfo(chiakiGui) << "Frame generation inactive";
         fg_active_multiplier = 1;
+        fg_active_cadence = 1;
         fg_pending_frames.clear();
     }
     if (direct_frame_fresh || !bypass_frame_queue) {

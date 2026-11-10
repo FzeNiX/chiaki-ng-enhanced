@@ -57,6 +57,19 @@ Settings → Video → **Frame Generation**: pick DLSS, FSR or Flow, then the
 [RTX Video Super Resolution](rtxvideo.md): frames are upscaled first, then
 generated.
 
+### 30 fps games in a 60 fps stream
+
+The console keeps sending 60 frames per second even when the game renders
+only 30, so every picture arrives twice. chiaki-ng recognises this from the
+size of the encoded frames (a repeat is an almost empty frame), drops the
+repeats and generates frames from the real 30 fps pictures; the multiplier
+doubles so the output frame rate stays what you picked (2x of a 60 fps stream
+= 4x of the 30 fps pictures = 120 fps). The stats overlay then shows
+*(half-rate source)* and the log `Source cadence: every picture repeated`.
+It switches back within a frame or two when the game runs at 60 again.
+Pick a multiplier whose output divides your refresh rate evenly (on 240 Hz:
+2x or 4x of 60, not 3x).
+
 ## Latency
 
 Frame generation has to wait for the next stream frame before it can show the

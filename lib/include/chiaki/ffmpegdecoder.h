@@ -26,7 +26,13 @@ struct chiaki_ffmpeg_frame_t
 	double pts;
 	double duration;
 	bool recovered;
+	// Compressed size of the packet this frame was decoded from, 0 if unknown.
+	// A repeated picture (e.g. a 30 fps game in a 60 fps stream) is encoded as
+	// an almost empty P-frame, so the size tells new pictures from repeats.
+	size_t packet_size;
 };
+
+#define CHIAKI_FFMPEG_PACKET_SIZE_HISTORY 32
 
 struct chiaki_ffmpeg_decoder_t
 {
@@ -50,6 +56,12 @@ struct chiaki_ffmpeg_decoder_t
 	double synthetic_candidate_duration_us;
 	uint64_t synthetic_last_sample_time_us;
 	uint8_t synthetic_candidate_count;
+	struct
+	{
+		int64_t pts;
+		size_t size;
+	} packet_sizes[CHIAKI_FFMPEG_PACKET_SIZE_HISTORY];
+	unsigned int packet_size_next;
 };
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_ffmpeg_decoder_init(ChiakiFfmpegDecoder *decoder, ChiakiLog *log,

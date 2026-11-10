@@ -4,6 +4,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/pixdesc.h>
 #include <math.h>
+#include <string.h>
 
 static enum AVCodecID chiaki_codec_av_codec_id(ChiakiCodec codec)
 {
@@ -40,6 +41,8 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_ffmpeg_decoder_init(ChiakiFfmpegDecoder *de
 	decoder->frames_lost = 0;
 	decoder->frame_recovered = false;
 	decoder->synthetic_packet_pts = 0;
+	memset(decoder->packet_sizes, 0, sizeof(decoder->packet_sizes));
+	decoder->packet_size_next = 0;
 	decoder->synthetic_framerate = (AVRational){max_fps > 0 ? (int)max_fps : 60, 1};
 	decoder->synthetic_time_base = (AVRational){1, 1000000};
 	decoder->synthetic_frame_duration_us = chiaki_ffmpeg_decoder_default_frame_duration_us(max_fps);
@@ -196,6 +199,9 @@ CHIAKI_EXPORT bool chiaki_ffmpeg_decoder_video_sample_cb(uint8_t *buf, size_t bu
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 8, 100)
 	packet->time_base = decoder->synthetic_time_base;
 #endif
+	decoder->packet_sizes[decoder->packet_size_next].pts = packet->pts;
+	decoder->packet_sizes[decoder->packet_size_next].size = buf_size;
+	decoder->packet_size_next = (decoder->packet_size_next + 1) % CHIAKI_FFMPEG_PACKET_SIZE_HISTORY;
 	decoder->synthetic_packet_pts += synthetic_duration_pts;
 	int r;
 send_packet:
@@ -281,6 +287,18 @@ CHIAKI_EXPORT ChiakiFfmpegFrame chiaki_ffmpeg_decoder_pull_frame(ChiakiFfmpegDec
 		frame->decode_error_flags |= 1;
 	}
 	decoder->frames_lost = 0;
+	size_t packet_size = 0;
+	if(frame && frame->pts != AV_NOPTS_VALUE)
+	{
+		for(unsigned int i = 0; i < CHIAKI_FFMPEG_PACKET_SIZE_HISTORY; i++)
+		{
+			if(decoder->packet_sizes[i].pts == frame->pts && decoder->packet_sizes[i].size)
+			{
+				packet_size = decoder->packet_sizes[i].size;
+				break;
+			}
+		}
+	}
 	AVRational pkt_timebase = decoder->codec_context->pkt_timebase;
 	AVRational ctx_timebase = decoder->codec_context->time_base;
 	AVRational framerate = decoder->codec_context->framerate;
@@ -289,6 +307,7 @@ CHIAKI_EXPORT ChiakiFfmpegFrame chiaki_ffmpeg_decoder_pull_frame(ChiakiFfmpegDec
 	ChiakiFfmpegFrame frame_plus_stats = {};
 	frame_plus_stats.frame = frame;
 	frame_plus_stats.recovered = recovered;
+	frame_plus_stats.packet_size = packet_size;
 	if(frame)
 	{
 		chiaki_ffmpeg_frame_get_timing(

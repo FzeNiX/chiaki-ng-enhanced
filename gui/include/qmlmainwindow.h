@@ -2,6 +2,7 @@
 
 #include "streamsession.h"
 #include "settings.h"
+#include "repeatcadence.h"
 
 #include <QMutex>
 #include <QAtomicInteger>
@@ -341,6 +342,10 @@ private:
     QAtomicInteger<int> fg_status_backend = 0;
     QAtomicInteger<int> fg_status_multiplier = 0;
     QAtomicInteger<int> fg_status_reason = 0;
+    // Stream frames per game picture (2 = 30 fps game in a 60 fps stream,
+    // repeats dropped before frame generation); set by presentFrame.
+    RepeatCadenceDetector repeat_detector;
+    QAtomicInteger<int> fg_source_cadence = 1;
     // Marker file present while frame generation starts; found at startup it
     // means the last start crashed, and frame generation is switched off.
     bool fg_crash_guard_armed = false;
@@ -383,6 +388,7 @@ private:
     // Frames still to be presented for the last stream frame: generated ones first, the real one last.
     std::vector<struct pl_frame> fg_pending_frames;
     int fg_active_multiplier = 1;
+    int fg_active_cadence = 1;
     int fg_last_backend = 0;
     uint64_t direct_frame_serial = 0;
     pl_queue placebo_queue = {};
