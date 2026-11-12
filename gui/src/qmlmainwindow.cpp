@@ -3050,8 +3050,8 @@ void QmlMainWindow::presentFrame(ChiakiFfmpegFrame frame, int32_t frames_lost, q
             qCInfo(chiakiGui).nospace() << "Source cadence: "
                 << (cadence == 2 ? "every picture repeated (e.g. 30 fps game in a 60 fps stream)"
                                  : "a new picture every stream frame")
-                << ", packets ~" << static_cast<qint64>(repeat_detector.peakSize())
-                << " B, last " << static_cast<qint64>(repeat_detector.lastSize()) << " B";
+                << ", new picture " << static_cast<qint64>(repeat_detector.newPictureSize())
+                << " B, last frame " << static_cast<qint64>(repeat_detector.lastSize()) << " B";
         }
         // The repeat is the same picture; frame generation only works on new ones.
         if (repeat && fg_status_backend.loadRelaxed() > 0) {

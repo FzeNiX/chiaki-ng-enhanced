@@ -83,6 +83,8 @@ public:
     // previous call and this one into `outputs`.
     virtual bool record(FrameGen::Impl &fg, VkCommandBuffer cmd, FgImage &color,
                         FgImage *const *outputs, int count, bool reset, float frame_interval_ms) = 0;
+    // The runtime call in progress, named in the log if the runtime crashes.
+    virtual const char *stage() const { return "record"; }
     // Drops size dependent state; called while no generation work is pending.
     virtual void invalidate() = 0;
     virtual void shutdown() = 0;
@@ -811,6 +813,8 @@ public:
 
     int maxGenerated() const override { return 1; }
 
+    const char *stage() const override { return last_stage; }
+
     bool record(FrameGen::Impl &fg, VkCommandBuffer cmd, FgImage &color,
                 FgImage *const *outputs, int count, bool reset, float frame_interval_ms) override
     {
@@ -818,6 +822,7 @@ public:
             return false;
         if (!context || width != color.w || height != color.h) {
             invalidate();
+            last_stage = "CreateContext";
             if (!createContext(fg, color.w, color.h))
                 return false;
             reset = true;
@@ -834,6 +839,7 @@ public:
         config.onlyPresentGenerated = false;
         config.generationRect = rect;
         config.frameID = frame_id;
+        last_stage = "Configure";
         if (!check(configure(&context, &config.header), "Configure"))
             return false;
 
@@ -852,6 +858,7 @@ public:
         prepare.viewSpaceToMetersFactor = 1.0f;
         prepare.depth = makeFfxResource(fg.depth, FFX_API_SURFACE_FORMAT_R32_FLOAT, false);
         prepare.motionVectors = makeFfxResource(fg.mvec, FFX_API_SURFACE_FORMAT_R16G16_FLOAT, false);
+        last_stage = "Prepare";
         if (!check(dispatch(&context, &prepare.header), "Prepare"))
             return false;
 
@@ -867,6 +874,7 @@ public:
         generate.minMaxLuminance[1] = 1000.0f;
         generate.generationRect = rect;
         generate.frameID = frame_id;
+        last_stage = "Dispatch";
         if (!check(dispatch(&context, &generate.header), "Dispatch"))
             return false;
         // FFX requires the frame id to advance by exactly one per frame.
@@ -944,6 +952,7 @@ private:
     PfnFfxConfigure configure = nullptr;
     PfnFfxDispatch dispatch = nullptr;
     ffxContext context = nullptr;
+    const char *last_stage = "";
     int width = 0;
     int height = 0;
     uint64_t frame_id = 0;
@@ -1257,7 +1266,9 @@ bool FrameGen::process(const struct pl_frame *src, int out_w, int out_h, int mul
             }
             if (seh_code) {
                 qCCritical(chiakiGui).nospace() << "[framegen] " << backendName(d.backend)
-                    << " crashed inside its runtime (exception 0x" << Qt::hex << seh_code << ")";
+                    << " crashed inside its runtime (exception 0x" << Qt::hex << seh_code << Qt::dec
+                    << ", in " << d.backend_impl->stage() << ", "
+                    << (d.have_history ? "after earlier frames" : "first frame") << ")";
                 backend_crashed = true;
                 ok = false;
             }
